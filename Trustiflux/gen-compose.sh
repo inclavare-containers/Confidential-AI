@@ -2,7 +2,7 @@
 
 set -e
 
-if [ "$#" -ne 5 ]; then
+if [ "$#" -ne 2 ]; then
   cat <<-EOF
 
 Usage:

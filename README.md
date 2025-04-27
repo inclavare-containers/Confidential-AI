@@ -1,3 +1,7 @@
+# Announcement
+
+Notice: This project is no longer maintained in this repository. Future updates and upgrades have been moved to [OpenAnolis Community](https://github.com/openanolis/confidential-ai). Please visit the new repository for the newest information.
+
 # Quick Start
 
 ## Introduction

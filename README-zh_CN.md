@@ -1,3 +1,7 @@
+# 公告
+
+**注意**：本项目已不在此仓库维护，后续更新升级均移动至[龙蜥社区](https://github.com/openanolis/confidential-ai)，请移步查看最新状态。
+
 # 快速启动
 
 ## 前言

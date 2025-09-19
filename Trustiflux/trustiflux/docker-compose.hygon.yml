@@ -1,0 +1,156 @@
+services:
+  attestation-agent:
+    image: confidential-ai-registry.cn-shanghai.cr.aliyuncs.com/product/attestation-agent:1.4.2
+    environment:
+      - RUST_LOG=debug
+      - TRUSTEE_ADDR=${TRUSTEE_ADDR}
+      - AS_ADDR=${TRUSTEE_ADDR}/as/
+    volumes:
+      - attestation-agent-sock:/run/confidential-containers/attestation-agent/
+      - /sys/devices:/sys/devices
+    devices:
+      - /dev/csv_guest
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    network_mode: host
+    init: true
+    command: [ "sh", "-c", "start.sh --trustee-addr ${TRUSTEE_ADDR} --as-addr ${TRUSTEE_ADDR}/as/" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "ss -n --listen | grep /run/confidential-containers/attestation-agent/attestation-agent.sock" ]
+      interval: 3s
+      start_period: 0s
+      start_interval: 3s
+      retries: 5
+      timeout: 5s
+
+  confidential-data-hub:
+    image: confidential-ai-registry.cn-shanghai.cr.aliyuncs.com/product/confidential-data-hub:1.4.2
+    environment:
+      - TRUSTEE_ADDR=${TRUSTEE_ADDR}
+      - CDH_KEY_ID=kbs:///${KBS_KEY_PATH}
+    volumes:
+      - attestation-agent-sock:/run/confidential-containers/attestation-agent/
+      - decryption-key:/tmp/gocryptfs-decryptionkey
+    network_mode: host
+    init: true
+    command:
+      - start.sh
+      - --trustee-addr
+      - ${TRUSTEE_ADDR}
+      - --key-id
+      - kbs:///${KBS_KEY_PATH}
+      - --resource-path
+      - /tmp/gocryptfs-decryptionkey/key
+    healthcheck:
+      test: [ "CMD-SHELL", "[ -f /tmp/gocryptfs-decryptionkey/key ]" ]
+      interval: 10s
+      start_period: 0s
+      start_interval: 3s
+      retries: 5
+      timeout: 5s
+    depends_on:
+      attestation-agent:
+        condition: service_healthy
+
+  tng:
+    image: confidential-ai-registry.cn-shanghai.cr.aliyuncs.com/product/tng:1.0.2
+    volumes:
+      - attestation-agent-sock:/run/confidential-containers/attestation-agent/
+    cap_add:
+      - NET_ADMIN
+    network_mode: host
+    command:
+    - tng
+    - launch
+    - --config-content
+    - |
+      {
+        "add_egress": [
+          {
+            "mapping": {
+              "in": {
+                "host": "0.0.0.0",
+                "port": 41000
+              },
+              "out": {
+                "host": "0.0.0.0",
+                "port": 9000
+              }
+            },
+            "attest": {
+              "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
+            }
+          }
+        ]
+      }
+    depends_on:
+      attestation-agent:
+        condition: service_healthy
+        restart: false
+
+
+  gocryptfs:
+    image: confidential-ai-registry.cn-shanghai.cr.aliyuncs.com/dev/test:gocryptfs-2.4.0
+    environment:
+      - MODEL_TYPE=${MODEL_TYPE}
+    volumes:
+      - /tmp/encrypted-model:/tmp/encrypted-model:shared
+      - /tmp/plaintext-model:/tmp/plaintext-model:shared
+      - decryption-key:/tmp/gocryptfs-decryptionkey
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    network_mode: host
+    init: true
+    command:
+      - start.sh
+    healthcheck:
+      test: [ "CMD-SHELL", "mount | grep /tmp/plaintext-model" ]
+      interval: 10s
+      start_period: 0s
+      start_interval: 3s
+      retries: 5
+      timeout: 5s
+    depends_on:
+      confidential-data-hub:
+        condition: service_healthy
+        restart: true
+
+  app:
+    image: image.sourcefind.cn:5000/dcu/admin/base/custom:vllm0.5.0-dtk24.04.1-ubuntu20.04-py310-20250225
+    privileged: true
+    shm_size: 64G
+    devices:
+      - "/dev/kfd"
+      - "/dev/dri"
+    ports:
+      - "9000:8000"  # Host port: Container port
+    volumes:
+      - /opt/hyhal:/opt/hyhal
+      - /tmp/plaintext-model:/app/model:shared
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    ulimits:
+      memlock: -1
+    ipc: host
+    group_add:
+      - video
+    command: >
+      sh -c "python3 -m vllm.entrypoints.api_server
+      --model /app/model/Qwen2.5-3B-Instruct/
+      --tensor-parallel-size 1
+      --gpu-memory-utilization 0.9
+      --trust-remote-code
+      --dtype auto
+      --enforce-eager"
+    restart: unless-stopped
+    depends_on:
+      - tng
+
+volumes:
+  attestation-agent-sock:
+  decryption-key:
